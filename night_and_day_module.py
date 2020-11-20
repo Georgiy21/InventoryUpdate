@@ -20,12 +20,9 @@ class Product:
             elif k == 'PRICE CND':
                 self.price = v
         self.parts = []
-        self.col_ex = False
         self.qty = '0'
-        if 'CD' in self.sku or 'CM' in self.sku:
-            self.collection = self.sku.split('-', 1)[1].split('-', 1)[0]
-        else:
-            self.collection = self.sku.split('-', 1)[0]
+        self.part_exist = True
+        self.color_exist = True
 
     def add_part(self, ProductPart):
         self.parts.append(ProductPart)
@@ -41,26 +38,40 @@ class Product:
                 part.sku = part.sku.rsplit('-', 1)[0] + '-' + color
 
     def update_qty(self):
-
-        self.qty = self.parts[0].qty
         # -102  -  Pricelist Part SKU (i.e. PF-BAS-TWN-XX) not in vendor's report
-        for part in self.parts:
-            if part.qty == '-102':
-                self.qty = part.qty
-            elif int(part.qty) < int(self.qty):
-                self.qty = part.qty
+        # -50   -  Color not in vendor's report
+        qty = self.parts[0].qty
 
-        if self.qty != '-102' and self.qty != '-50':
-            if int(self.qty) < 0:
+        if not self.part_exist:
+            self.qty = '-102'
+        elif self.part_exist and not self.color_exist:
+            self.qty = '-50'
+        else:
+            for part in self.parts:
+                if int(part.qty) < int(qty):
+                    qty = part.qty
+
+            if int(qty) < 0:
                 self.qty = '0'
+            else:
+                self.qty = qty
 
-    def collection_exists(self):
-        self.col_ex = True
+    def exist(self):
         for part in self.parts:
-            part.col_ex = True
+            if part.part_exist == False:
+                self.part_exist = False
+                self.qty = part.qty = '-102'
+
+    def is_color_exist(self):
+        for part in self.parts:
+            if part.color_exist == False:
+                self.color_exist = False
+                if part.part_exist:
+                    part.qty = '-50'
 
     # def __repr__(self):
     #     return "{}".format(self.sku)
+
     def __repr__(self):
         return "{} : {}".format(self.sku, self.qty)
 
@@ -103,6 +114,8 @@ class InventoryProduct:
         self.qty = line['Wholesale Furniture Brokers']
         self.parts = []
         self.add_sku_part()
+        self.product_exist = True
+        self.color_exist = True
 
     def add_sku_part(self):
         if '|' in self.sku:
@@ -116,76 +129,92 @@ class InventoryProduct:
     def update_stock(self):
         # -101  -  Inventory Part SKU in not on Price List Product SKU
         # -102  -  Pricelist Part SKU (i.e. PF-BAS-TWN-XX) not in vendor's report
-        self.qty = self.parts[0].qty
+        # -50   -  Color not in vendor's report
+        qty = self.parts[0].qty
+
         for part in self.parts:
             if part.qty == '-102':
                 self.qty = part.qty
-            elif part.qty == '-101':
-                if self.qty != '-102':
-                    self.qty = part.qty
-            elif int(part.qty) < int(self.qty):
-                self.qty = part.qty
+            elif not self.product_exist and part.qty != '-102':
+                pass
+            elif not part.color_exist and part.qty != '-102':
+                self.qty = '-50'
+            else:
+                if int(part.qty) < int(qty):
+                    qty = part.qty
 
-        if self.qty != '-101' and self.qty != '-50' and self.qty != '-102':
-            if int(self.qty) < 0:
-                self.qty = '0'
+                self.qty = qty
+
+    def is_product_exist(self):
+        # -101  -  Inventory Part SKU in not on Price List Product SKU
+        for part in self.parts:
+            if part.product_exist == False:
+                self.product_exist = False
+                self.qty = part.qty = '-101'
+
+    def __repr__(self):
+        return "{} : {}".format(self.sku, self.qty)
 
     # def __repr__(self):
-    #     return "{} : {}".format(self.sku, self.qty)
-    def __repr__(self):
-        return "{}".format(self.sku)
+    #     return "{}".format(self.sku)
 
 
 class InventoryProductPart(InventoryProduct):
     def __init__(self, sku):
         self.sku = sku
         self.qty = '0'
+        self.product_exist = True
+        self.color_exist = True
 
     def __repr__(self):
         return "{} : {}".format(self.sku, self.qty)
 
 
-def collection_exists(products_pl, ven_products):
-    result = []
+# check if vendor's report contains PART SKU from pricelist
+def check_part_exist(products_pl, ven_products):
+    part_exist = []
+
     for product in products_pl:
-        for ven_p in ven_products:
-            if product.collection in ven_p.sku:
-                product.collection_exists()
-        result.append(product)
-    return result
+        for part in product.parts:
+            for ven_p in ven_products:
+                if 'XX' in part.sku:
+                    if part.sku.rsplit('-', 1)[0] in ven_p.sku:
+                        part_exist.append(part.sku)
+                else:
+                    if part.sku == ven_p.sku:
+                        part_exist.append(part.sku)
+            if part.sku not in part_exist:
+                part.part_exist = False
+        product.exist()
 
 
+# assign color to pricelist products' parts
 def assing_color(inv_skus, products_pl):
+    not_updated_product, ppl_skus = [], []
 
-    not_updated_parts = []
-    ppl_skus = []
-
-    for i_product in inv_skus:
-        for part in i_product.parts:
+    for product in inv_skus:
+        for part in product.parts:
             for ppl in products_pl:
-                if part.sku.rsplit('-', 1)[0] == ppl.sku.rsplit('-', 1)[0]:
+                if part.sku.rsplit('-', 1)[0].strip() == ppl.sku.rsplit('-', 1)[0].strip():
                     temp = copy.deepcopy(ppl)
                     color = part.sku.rsplit('-', 1)[1]
-                    temp.sku = ppl.sku.rsplit('-', 1)[0] + '-' + color
-                    check_sku = temp.sku
+                    temp.sku = ppl.sku.replace('XX', color)
                     temp.change_color_parts()
-                    not_updated_parts.append(temp)
-                    ppl_skus.append(check_sku)
+                    not_updated_product.append(temp)
+                    ppl_skus.append(temp.sku)
                     break
             # Inventory Product
             if part.sku not in ppl_skus:
-                part.qty = '-101'
-                not_updated_parts.append(part)
+                part.product_exist = False
+        product.is_product_exist()
+        product.update_stock()
 
-    return not_updated_parts
-
-# list
+    return not_updated_product
 
 
 def products_to_parts(reader):
     # 1) if first item on the list, create a Product object
     # 2) else add the SKU to the Product as ProductPart
-
     count = 0
     products = []
 
@@ -231,52 +260,85 @@ def get_files_list():
     return inv_ven_dict
 
 
-def update_sku_stock(inv_products, products_pl, ven_products):
-    # in vendor's report
-    color_exist = []
-    part_exist = []
+def add_column_name(vendor_file):
+    ven_products, new_file = [], []
+    is_col_name_set = False
 
+    with open(vendor_file, 'r', encoding='utf8') as read_file:
+        reader = csv.reader(read_file)
+        for line in reader:
+            new_file.append(line)
+    read_file.close()
+
+    for line in new_file:
+        if line[3] != 'SKU':
+            line[3] = 'SKU'
+            is_col_name_set = True
+        break
+
+    if is_col_name_set == True:
+        with open(vendor_file, 'w', newline='') as output_file:
+            writer = csv.writer(output_file)
+
+            for line in new_file:
+                writer.writerow(line)
+        output_file.close()
+
+    with open(vendor_file, 'r', encoding='utf8') as vendor_read_file:
+        ven_reader = csv.DictReader(vendor_read_file)
+        for line in ven_reader:
+            invRepProduct = InventoryReportProduct(line)
+            if hasattr(invRepProduct, 'sku'):
+                ven_products.append(invRepProduct)
+    vendor_read_file.close()
+
+    return ven_products
+
+
+def assign_qty(inv_products, ven_products, not_updated_product):
+    color_exist = []
     result = dict()
 
-    # check if vendor's report  contains collection from price list
-    products_pl = collection_exists(products_pl, ven_products)
+    # update products' qty if color exist
+    for p in not_updated_product:
+        for part in p.parts:
+            for ven_p in ven_products:
+                if part.sku == ven_p.sku:
+                    part.qty = ven_p.qty
+                    color_exist.append(part.sku)
+                    break
+            if part.sku not in color_exist:
+                part.color_exist = False
+        p.is_color_exist()
+        p.update_qty()
 
-    # assign color to pricelist products' parts
-    not_updated_parts = assing_color(inv_products, products_pl)
+    # for p in not_updated_product:
+    #     print(p, p.parts)
 
-    # check if part exists in the vendor's report and assign stock value
-    for p in not_updated_parts:
-        if type(p) == Product:
-            for part in p.parts:
-                for ven_p in ven_products:
-                    if part.sku == ven_p.sku:
-                        part.qty = ven_p.qty
-                        color_exist.append(part.sku)
-                    if part.sku.rsplit('-', 1)[0] in ven_p.sku:
-                        part_exist.append(part.sku)
-                        continue
-                if part.sku not in part_exist:
-                    part.qty = '-102'
-                if part.sku not in color_exist and part.qty != '-102':
-                    part.qty = '-50'
-            p.update_qty()
-
-    # for p in not_updated_parts:
-    #     if type(p) == Product:
-    #         print(p, '|', p.parts)
-
-    # update inventory products stock
     for inv_p in inv_products:
         for i_part in inv_p.parts:
-            for part in not_updated_parts:
+            for part in not_updated_product:
                 if i_part.sku == part.sku:
                     i_part.qty = part.qty
-            # print(i_part.sku, i_part.qty)
+                    if part.color_exist == False:
+                        i_part.color_exist = False
         inv_p.update_stock()
-        # print(inv_p, inv_p.qty)
+        # print(inv_p, inv_p.parts)
         result.update({inv_p: inv_p.qty})
 
-    # print(result)
+    return result
+
+
+def update_sku_stock(inv_products, products_pl, ven_products):
+
+    # check if vendor's report contains PART from price list
+    check_part_exist(products_pl, ven_products)
+
+    # assign color to pricelist products' parts
+    not_updated_product = assing_color(inv_products, products_pl)
+
+    # update inventory products stock
+    result = assign_qty(inv_products, ven_products, not_updated_product)
 
     return result
 
@@ -293,13 +355,7 @@ for inventory_file, vendor_file in inv_ven_dict.items():
 
         products_pl = products_to_parts(reader)
 
-    with open(vendor_file, 'r', encoding='utf8') as vendor_report:
-        ven_reader = csv.DictReader(vendor_report)
-
-        for line in ven_reader:
-            invRepProduct = InventoryReportProduct(line)
-            if hasattr(invRepProduct, 'sku'):
-                ven_products.append(invRepProduct)
+    ven_products = add_column_name(vendor_file)
 
     with open(inventory_file, 'r', encoding='utf8') as inventory:
         inv_reader = csv.DictReader(inventory)
