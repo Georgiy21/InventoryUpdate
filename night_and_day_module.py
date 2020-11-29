@@ -6,6 +6,37 @@ from datetimerange import DateTimeRange
 import os.path
 
 
+def get_timerange():
+
+    datemask = '%Y-%m-%d'
+
+    future_date = datetime.today() + timedelta(days=10)
+    today_date = datetime.today()
+
+    fday = datetime.strftime(future_date, datemask)
+    tday = datetime.strftime(today_date, datemask)
+
+    time_range = DateTimeRange(tday, fday)
+
+    return time_range
+
+
+class Container:
+    def __init__(self, line):
+        self.id = line['Num']
+        self.date = line['Deliv Date']
+        self.products = []
+        if self.date == '':
+            self.date = datetime(1, 1, 1)
+
+    def add_product(self, product, stock):
+        product.set_qty(stock)
+        self.products.append(product)
+
+    def __repr__(self):
+        return "{} : {}".format(self.id, self.products)
+
+
 class Product:
     def __init__(self, line):
         for k, v in line.items():
@@ -20,7 +51,7 @@ class Product:
             elif k == 'PRICE CND':
                 self.price = v
         self.parts = []
-        self.qty = '0'
+        self.qty = int()
         self.part_exist = True
         self.color_exist = True
 
@@ -43,16 +74,16 @@ class Product:
         qty = self.parts[0].qty
 
         if not self.part_exist:
-            self.qty = '-102'
+            self.qty = -102
         elif self.part_exist and not self.color_exist:
-            self.qty = '-50'
+            self.qty = -50
         else:
             for part in self.parts:
-                if int(part.qty) < int(qty):
+                if part.qty < qty:
                     qty = part.qty
 
-            if int(qty) < 0:
-                self.qty = '0'
+            if qty < 0:
+                self.qty = 0
             else:
                 self.qty = qty
 
@@ -83,26 +114,22 @@ class ProductPart(Product):
 class InventoryReportProduct:
     def __init__(self, line):
         if line['SKU'] != '' and 'other' not in line['SKU'].lower():
-            time_range = self.get_timerange()
-            if line['Next Deliv'] != '' and line['Next Deliv'] in time_range:
-                line['Available'] = int(
-                    line['Available']) + int(float(line['On PO'].replace(',', '')))
-            self.qty = line['Available']
             self.sku = line['SKU'].strip()
+            self.qty = self.convert_number(line['Available'])
+            self.qty_coming = self.convert_number(line['On PO'])
+            self.date_coming = ''
+            if line['Next Deliv'] != '':
+                self.date_coming = line['Next Deliv']
 
-    def get_timerange(self):
+    def update_qty(self):
+        self.qty = self.qty + self.qty_coming
 
-        datemask = '%Y-%m-%d'
-
-        future_date = datetime.today() + timedelta(days=14)
-        today_date = datetime.today()
-
-        fday = datetime.strftime(future_date, datemask)
-        tday = datetime.strftime(today_date, datemask)
-
-        time_range = DateTimeRange(tday, fday)
-
-        return time_range
+    def convert_number(self, value):
+        result = int()
+        if ',' in value:
+            value = value.replace(',', '')
+        result = int(float(value))
+        return result
 
     def __repr__(self):
         return "{} : {}".format(self.sku, self.qty)
@@ -111,7 +138,7 @@ class InventoryReportProduct:
 class InventoryProduct:
     def __init__(self, line):
         self.sku = line['SKU']
-        self.qty = line['Wholesale Furniture Brokers']
+        self.qty = int(line['Wholesale Furniture Brokers'])
         self.parts = []
         self.add_sku_part()
         self.product_exist = True
@@ -133,14 +160,14 @@ class InventoryProduct:
         qty = self.parts[0].qty
 
         for part in self.parts:
-            if part.qty == '-102':
+            if part.qty == -102:
                 self.qty = part.qty
-            elif not self.product_exist and part.qty != '-102':
+            elif not self.product_exist and part.qty != -102:
                 pass
-            elif not part.color_exist and part.qty != '-102':
-                self.qty = '-50'
+            elif not part.color_exist and part.qty != -102:
+                self.qty = -50
             else:
-                if int(part.qty) < int(qty):
+                if part.qty < qty:
                     qty = part.qty
 
                 self.qty = qty
@@ -152,19 +179,22 @@ class InventoryProduct:
                 self.product_exist = False
                 self.qty = part.qty = '-101'
 
-    def __repr__(self):
-        return "{} : {}".format(self.sku, self.qty)
-
     # def __repr__(self):
-    #     return "{}".format(self.sku)
+    #     return "{} : {}".format(self.sku, self.qty)
+
+    def __repr__(self):
+        return "{}".format(self.sku)
 
 
 class InventoryProductPart(InventoryProduct):
     def __init__(self, sku):
         self.sku = sku
-        self.qty = '0'
+        self.qty = ''
         self.product_exist = True
         self.color_exist = True
+
+    def set_qty(self, value):
+        self.qty = int(float(value))
 
     def __repr__(self):
         return "{} : {}".format(self.sku, self.qty)
@@ -240,27 +270,31 @@ def get_files_list():
     cwd = os.getcwd()
 
     inv_ven_dict = dict()
-    ven_list = []
-    inv_list = []
+    inv_file, po_file, info_file = '', '', ''
+    ven_files = []
 
     for dirpath, dirnames, files in os.walk(cwd):
         for file_name in files:
-            if file_name.endswith('.py') or 'updated' in file_name:
-                pass
-            elif 'export_1.csv' in file_name:
-                inv_list.append(file_name)
-            elif file_name.endswith('.csv'):
-                ven_list.append(file_name)
+            if not file_name.endswith('.py') and 'updated' not in file_name.lower():
+                if 'n&d_ca_export_1.csv' == file_name:
+                    inv_file = file_name
+                elif 'n&d' in file_name:
+                    if 'PO' in file_name:
+                        po_file = cwd + '\\vendor_report\\' + file_name
+                    else:
+                        ven_files.append(file_name)
+                elif file_name == 'nad_sku_map.csv':
+                    info_file = cwd + '\\__pycache__\\' + file_name
 
-    for i in inv_list:
-        for v in ven_list:
-            if 'n&d' in i and 'n&d' in v:
-                inv_ven_dict['shopify_inventory/' + i] = 'vendor_report/' + v
+    for v in ven_files:
+        if 'n&d' in v:
+            inv_ven_dict['shopify_inventory/' +
+                         inv_file] = 'vendor_report/' + v
 
-    return inv_ven_dict
+    return inv_ven_dict, po_file, info_file
 
 
-def add_column_name(vendor_file):
+def add_column_sku(vendor_file):
     ven_products, new_file = [], []
     is_col_name_set = False
 
@@ -282,17 +316,9 @@ def add_column_name(vendor_file):
 
             for line in new_file:
                 writer.writerow(line)
+
         output_file.close()
-
-    with open(vendor_file, 'r', encoding='utf8') as vendor_read_file:
-        ven_reader = csv.DictReader(vendor_read_file)
-        for line in ven_reader:
-            invRepProduct = InventoryReportProduct(line)
-            if hasattr(invRepProduct, 'sku'):
-                ven_products.append(invRepProduct)
-    vendor_read_file.close()
-
-    return ven_products
+        print('SKU COLUMN NAME IS ADDED')
 
 
 def assign_qty(inv_products, ven_products, not_updated_product):
@@ -343,8 +369,53 @@ def update_sku_stock(inv_products, products_pl, ven_products):
     return result
 
 
-info_file = 'C:\\Users\\gosha\\Desktop\\WFB\\update-inventory\\__pycache__\\nad_sku_map.csv'
-inv_ven_dict = get_files_list()
+def products_to_containers(po_file):
+    products, containers, container_list = [], [], []
+
+    with open(po_file, 'r', encoding='utf8') as input_fule:
+        reader = csv.DictReader(input_fule)
+
+        for line in reader:
+            if line['SKU'] != '' and 'Total' not in line['SKU']:
+                product = InventoryProductPart(line['SKU'])
+                products.append(product)
+            if line['Num'] != '' and line['Memo'] != 'Rounding Difference':
+                if line['Num'] not in container_list:
+                    container = Container(line)
+                    container_list.append(container.id)
+                    containers.append(container)
+                else:
+                    for c in containers:
+                        if c.id == line['Num']:
+                            container = c
+                for product in products:
+                    temp = copy.deepcopy(product)
+                    container.add_product(temp, line['Qty'])
+            if 'Total' in line['SKU']:
+                products = []
+
+    return containers
+
+
+def update_coming_stock(containers, ven_products):
+    time_range = get_timerange()
+
+    for container in containers:
+        if container.date in time_range:
+            for product in ven_products:
+                for item in container.products:
+                    if product.sku == item.sku:
+                        product.qty_coming = item.qty
+                        product.update_qty()
+
+    return ven_products
+
+
+inv_ven_dict, po_file, info_file = get_files_list()
+
+add_column_sku(po_file)
+
+containers = products_to_containers(po_file)
 
 for inventory_file, vendor_file in inv_ven_dict.items():
 
@@ -355,7 +426,18 @@ for inventory_file, vendor_file in inv_ven_dict.items():
 
         products_pl = products_to_parts(reader)
 
-    ven_products = add_column_name(vendor_file)
+    input_fule.close()
+    add_column_sku(vendor_file)
+
+    with open(vendor_file, 'r', encoding='utf8') as vendor_read_file:
+        ven_reader = csv.DictReader(vendor_read_file)
+        for line in ven_reader:
+            invRepProduct = InventoryReportProduct(line)
+            if hasattr(invRepProduct, 'sku'):
+                ven_products.append(invRepProduct)
+
+    vendor_read_file.close()
+    ven_products = update_coming_stock(containers, ven_products)
 
     with open(inventory_file, 'r', encoding='utf8') as inventory:
         inv_reader = csv.DictReader(inventory)
@@ -364,4 +446,5 @@ for inventory_file, vendor_file in inv_ven_dict.items():
             product = InventoryProduct(line)
             inv_products.append(product)
 
+    inventory.close()
     result = update_sku_stock(inv_products, products_pl, ven_products)
