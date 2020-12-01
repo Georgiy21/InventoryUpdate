@@ -137,7 +137,7 @@ def get_files_dict():
             if not file_name.endswith('.py') and 'updated' not in file_name.lower():
                 if 'export_1.csv' in file_name:
                     inv_list.append(file_name)
-                elif file_name.endswith('.csv'):
+                elif 'report.csv' in file_name:
                     ven_list.append(file_name)
 
     for i in inv_list:
@@ -272,6 +272,9 @@ def get_inventory_columns(inventory):
 
 
 def main():
+
+    import rename_files
+    rename_files.change_filename()
 
     vendor_name = ''
     inv_ven_dict = get_files_dict()

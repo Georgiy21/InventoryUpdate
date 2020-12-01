@@ -279,7 +279,7 @@ def get_files_list():
                 if 'n&d_ca_export_1.csv' == file_name:
                     inv_file = file_name
                 elif 'n&d' in file_name:
-                    if 'PO' in file_name:
+                    if 'po' in file_name:
                         po_file = cwd + '\\vendor_report\\' + file_name
                     else:
                         ven_files.append(file_name)
